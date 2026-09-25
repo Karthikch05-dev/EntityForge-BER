@@ -1,11 +1,12 @@
 """FastAPI dashboard for the business entity-resolution pipeline."""
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import re
-import subprocess
-import sys
+import traceback
 from threading import Lock
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -20,7 +21,6 @@ TRAIN_DIR = BASE_DIR / "dataset" / "train"
 RUNTIME_DIR = Path(os.getenv("ENTITYFORGE_RUNTIME_DIR", "/tmp/entityforge-ber" if os.getenv("VERCEL") else str(BASE_DIR)))
 TEST_DIR = RUNTIME_DIR / "dataset" / "test"
 OUTPUT_DIR = RUNTIME_DIR / "output"
-PIPELINE = BASE_DIR / "run_solution.py"
 DASHBOARD_TEMPLATE = BASE_DIR / "templates" / "dashboard.html"
 REQUIRED_COLUMNS = {"entity_id", "business_name", "business_address", "country"}
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
@@ -134,19 +134,17 @@ def normalize_for_pipeline(frame: pd.DataFrame, schema: dict, source_label: str)
 
 
 def run_pipeline() -> str:
-    result = subprocess.run(
-        [sys.executable, str(PIPELINE), "--train-dir", str(TRAIN_DIR),
-         "--test-dir", str(TEST_DIR), "--output-dir", str(OUTPUT_DIR)],
-        cwd=BASE_DIR,
-        capture_output=True,
-        text=True,
-        timeout=300,
-        check=False,
-    )
-    if result.returncode:
-        detail = (result.stderr or result.stdout or "Pipeline failed").strip()[-3000:]
-        raise HTTPException(status_code=500, detail=detail)
-    return (result.stdout or "Pipeline completed").strip()
+    # Run in-process: on Vercel a child interpreter can't see the function's installed packages.
+    import run_solution
+
+    output = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(output):
+            run_solution.main(str(TRAIN_DIR), str(TEST_DIR), str(OUTPUT_DIR))
+    except Exception as exc:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Matching failed: {exc}") from exc
+    return output.getvalue().strip() or "Pipeline completed"
 
 
 def csv_ids(value: object) -> list[str]:
