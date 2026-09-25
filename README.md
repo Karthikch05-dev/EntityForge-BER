@@ -20,6 +20,8 @@ EntityForge-BER matches fragmented company records from Source 2 and Source 3 ag
 ```text
 EntityForge-BER/
 ├── entity_resolver_app.py       # FastAPI application and embedded dashboard
+├── vercel.json                  # Vercel Python function and route configuration
+├── requirements.txt             # Minimal Vercel dependency set
 ├── run_solution.py              # ML matching pipeline
 ├── check.py                     # Convenience submission validator
 ├── requirements-dashboard.txt   # Dashboard/runtime dependencies
@@ -57,6 +59,19 @@ python -m uvicorn entity_resolver_app:app --reload
 ```
 
 Open `http://127.0.0.1:8000` in a browser. API documentation is available at `http://127.0.0.1:8000/docs`.
+
+## Deploy to Vercel
+
+The Vercel function treats the repository as read-only. Uploaded test files and generated outputs are written to `/tmp/entityforge-ber`; the training dataset and application code remain read-only package assets.
+
+Deploy from the repository root with the Vercel CLI:
+
+```powershell
+npx vercel
+npx vercel --prod
+```
+
+Or import `Karthikch05-dev/EntityForge-BER` in the Vercel dashboard. The included `vercel.json` routes all requests to `entity_resolver_app.py`. For serverless builds, Vercel installs `requirements.txt`; use `requirements-dashboard.txt` for local development with Uvicorn and optional LightGBM.
 
 ### Upload workflow
 

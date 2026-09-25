@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import html
 import json
+import os
 import subprocess
 import sys
 from threading import Lock
@@ -15,8 +16,10 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 
 BASE_DIR = Path(__file__).resolve().parent
-TEST_DIR = BASE_DIR / "dataset" / "test"
-OUTPUT_DIR = BASE_DIR / "output"
+TRAIN_DIR = BASE_DIR / "dataset" / "train"
+RUNTIME_DIR = Path(os.getenv("ENTITYFORGE_RUNTIME_DIR", "/tmp/entityforge-ber" if os.getenv("VERCEL") else str(BASE_DIR)))
+TEST_DIR = RUNTIME_DIR / "dataset" / "test"
+OUTPUT_DIR = RUNTIME_DIR / "output"
 PIPELINE = BASE_DIR / "run_solution.py"
 REQUIRED_COLUMNS = {"entity_id", "business_name", "business_address", "country"}
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
@@ -62,7 +65,7 @@ def validate_upload(data: bytes, filename: str) -> pd.DataFrame:
 
 def run_pipeline() -> str:
     result = subprocess.run(
-        [sys.executable, str(PIPELINE), "--train-dir", str(BASE_DIR / "dataset" / "train"),
+        [sys.executable, str(PIPELINE), "--train-dir", str(TRAIN_DIR),
          "--test-dir", str(TEST_DIR), "--output-dir", str(OUTPUT_DIR)],
         cwd=BASE_DIR,
         capture_output=True,
