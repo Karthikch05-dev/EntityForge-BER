@@ -1,7 +1,6 @@
 """FastAPI dashboard for the business entity-resolution pipeline."""
 from __future__ import annotations
 
-import html
 import json
 import os
 import re
@@ -22,6 +21,7 @@ RUNTIME_DIR = Path(os.getenv("ENTITYFORGE_RUNTIME_DIR", "/tmp/entityforge-ber" i
 TEST_DIR = RUNTIME_DIR / "dataset" / "test"
 OUTPUT_DIR = RUNTIME_DIR / "output"
 PIPELINE = BASE_DIR / "run_solution.py"
+DASHBOARD_TEMPLATE = BASE_DIR / "templates" / "dashboard.html"
 REQUIRED_COLUMNS = {"entity_id", "business_name", "business_address", "country"}
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 PIPELINE_LOCK = Lock()
@@ -209,106 +209,11 @@ def render_dashboard(message: str = "") -> str:
         rows, summary = dashboard_rows()
     except Exception:
         rows, summary = [], {"total": 0, "matched": 0, "singletons": 0, "mean_confidence": 0, "source2_matches": 0, "source3_matches": 0}
-    rows_json = (json.dumps(rows, ensure_ascii=False)
-                 .replace("<", "\\u003c")
-                 .replace(">", "\\u003e")
-                 .replace("&", "\\u0026"))
-    notice = f'<div class="notice">{html.escape(message)}</div>' if message else ""
-    smart_panel = """<section class="panel smart-panel"><div class="stepper"><span class="step active"><b>1</b> Upload</span><i></i><span class="step"><b>2</b> Auto-analyze</span><i></i><span class="step"><b>3</b> Match</span><i></i><span class="step"><b>4</b> Results</span></div><div class="panel-title"><div><h2>Smart data workspace</h2><span>Upload 2 or more CSV/TSV files to detect schemas and build a matching plan.</span></div><span class="eyebrow">AUTO-ML</span></div><div class="smart-actions"><label class="smart-file"><input id="smart-files" type="file" accept=".csv,.tsv" multiple><span>＋ Choose CSV / TSV files</span><small id="smart-file-count">No files selected</small></label><button id="analyze-files" type="button">Analyze dataset</button><button id="smart-run" class="button ghost" type="button">Run smart match</button></div><div id="analysis-output" class="analysis-output"><span class="muted">Schema mapping and model selection will appear here.</span></div></section>"""
-    template = """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>EntityForge BER — Entity Intelligence</title><script src="https://cdn.jsdelivr.net/npm/apexcharts"></script><script>window.ApexCharts=window.ApexCharts||class{constructor(element){this.element=element}render(){this.element.innerHTML='<div class="empty">Chart library unavailable — metrics remain available.</div>';return Promise.resolve()}};</script>
-<style>
-:root{--bg:#0f172a;--panel:#1e293b;--line:#334155;--text:#e2e8f0;--muted:#94a3b8;--indigo:#4f46e5;--green:#059669}
-*{box-sizing:border-box}html,body{margin:0;min-height:100%;width:100%;background:var(--bg);color:var(--text);font:14px Inter,ui-sans-serif,system-ui,sans-serif}body{min-height:100vh;overflow-x:hidden}.shell{width:100%;max-width:1420px;min-height:100vh;margin:0 auto;padding:28px 28px 72px}.nav{display:flex;justify-content:space-between;align-items:center;margin-bottom:72px}.brand{display:flex;gap:12px;align-items:center;font-weight:800;font-size:17px}.logo{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;background:#334155}.logo svg{width:18px}.status{display:flex;gap:8px;align-items:center;border:1px solid #365047;border-radius:99px;padding:8px 12px;color:#a7c5b8;background:#12211d}.dot{width:7px;height:7px;border-radius:50%;background:#059669;animation:pulse 2s infinite}@keyframes pulse{50%{opacity:.5}}
-.eyebrow{color:#a5b4fc;text-transform:uppercase;font-weight:800;font-size:11px;letter-spacing:.14em}.hero{display:flex;justify-content:space-between;gap:36px;align-items:end;margin-bottom:34px}.hero h1{font-size:clamp(36px,5vw,66px);line-height:1;letter-spacing:-.065em;margin:11px 0 16px;max-width:780px}.hero p{color:var(--muted);font-size:17px;max-width:620px;line-height:1.6;margin:0}.actions{display:flex;gap:10px;flex-wrap:wrap}.button,button{border:1px solid transparent;border-radius:10px;padding:11px 15px;color:#fff;background:var(--indigo);font-weight:750;text-decoration:none;cursor:pointer;transition:.2s transform,.2s background}.button:hover,button:hover{transform:translateY(-1px;background:#4338ca}.button.ghost{background:#1e293b;border-color:var(--line);color:#cbd5e1}.notice{border:1px solid #27634e;background:#12352c;color:#a7d8c5;padding:13px 16px;border-radius:12px;margin-bottom:22px}.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px}.metric,.panel{background:var(--panel);border:1px solid var(--line);border-radius:16px;box-shadow:0 12px 30px #02061755}.metric{padding:20px}.metric-label{color:var(--muted);font-size:12px;font-weight:650}.metric-value{display:block;font-size:32px;font-weight:800;letter-spacing:-.06em;margin:13px 0 5px}.metric-foot{color:#64748b;font-size:12px}.metric-foot strong{color:#86cdb0}
-.drop-size{display:inline-block;color:#94a3b8;font-size:11px;margin-top:8px}
-.smart-panel{margin-bottom:18px}.stepper{display:flex;align-items:center;gap:10px;margin-bottom:22px;color:#64748b;font-size:11px;font-weight:750;text-transform:uppercase;letter-spacing:.08em}.step{display:flex;align-items:center;gap:7px;white-space:nowrap}.step b{display:grid;place-items:center;width:23px;height:23px;border:1px solid #475569;border-radius:50%;font-size:11px}.step.active{color:#c7d2fe}.step.active b{background:#4f46e5;border-color:#4f46e5;color:white}.stepper i{height:1px;flex:1;background:#334155}.smart-actions{display:flex;gap:10px;align-items:stretch}.smart-file{display:flex;flex:1;justify-content:space-between;align-items:center;gap:12px;padding:12px 14px;border:1px dashed #475569;border-radius:10px;color:#cbd5e1;cursor:pointer;background:#111827}.smart-file input{display:none}.smart-file small{color:#94a3b8}.analysis-output{margin-top:14px;min-height:54px}.analysis-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px}.analysis-card{padding:12px;border:1px solid #334155;border-radius:10px;background:#111827}.analysis-card strong{display:block;margin-bottom:7px}.analysis-card small{display:block;color:#94a3b8;line-height:1.6}.plan-bar{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.plan-tag{padding:5px 8px;border-radius:99px;background:#1e293b;color:#cbd5e1;font-size:11px}
-.grid{display:grid;grid-template-columns:1.2fr .8fr;gap:18px;margin-bottom:18px}.panel{padding:22px}.panel-title{display:flex;justify-content:space-between;align-items:center;gap:14px;margin-bottom:18px}.panel-title h2{font-size:16px;margin:0}.panel-title span{color:var(--muted);font-size:12px}.chart{min-height:220px}.upload{border-style:dashed}.drop-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.drop{position:relative;border:1px dashed #475569;border-radius:13px;padding:16px;transition:.25s background,.25s border-color;background:#111827}.drop:hover,.drop.ready{border-color:#64748b;background:#172235}.drop input{position:absolute;inset:0;opacity:0;cursor:pointer}.drop-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:22px}.source-tag{font-size:10px;color:#a6aec0;text-transform:uppercase;letter-spacing:.12em;font-weight:800}.check{display:none;color:var(--green);font-size:18px}.drop.ready .check{display:block}.drop-name{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.drop-hint{color:var(--muted);font-size:12px;margin-top:5px}.run-row{display:flex;justify-content:space-between;align-items:center;gap:18px;margin-top:18px}.run-row small{color:var(--muted)}.progress{height:3px;flex:1;background:#202939;border-radius:9px;overflow:hidden;display:none}.progress i{display:block;height:100%;width:40%;background:#4f46e5;animation:load 1s infinite}@keyframes load{to{transform:translateX(260%)}}
-.toolbar{display:flex;justify-content:space-between;gap:16px;align-items:center;margin-bottom:16px}.toolbar h2{margin:0;font-size:17px}.controls{display:flex;gap:8px;align-items:center}.search{width:min(310px,40vw);background:#0b1018;border:1px solid var(--line);border-radius:9px;padding:10px 12px;color:var(--text);outline:none}.search:focus{border-color:#64748b}.toggle{display:flex;padding:3px;border:1px solid var(--line);border-radius:9px;background:#0a0e15}.toggle button{background:transparent;border:0;color:var(--muted);padding:7px 9px;font-size:12px}.toggle button.active{background:#1e293b;color:#cbd5e1;box-shadow:none;transform:none}.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:11px}table{width:100%;border-collapse:collapse;min-width:920px}th,td{padding:14px 15px;text-align:left;border-bottom:1px solid #1d2531;vertical-align:top}th{background:#0c1119;color:#687589;text-transform:uppercase;font-size:10px;letter-spacing:.1em}tr{animation:rise .3s ease both}tr:hover td{background:#151b27}tr:last-child td{border:0}.id{font-weight:750;color:#dce2ed;white-space:nowrap}.company{font-weight:700}.muted{color:var(--muted);font-size:12px;line-height:1.55}.pill{display:inline-flex;align-items:center;gap:5px;background:#1e293b;border:1px solid #334155;border-radius:99px;color:#cbd5e1;padding:5px 8px;margin:2px;font-size:11px}.match{margin-bottom:8px}.match:last-child{margin:0}.confidence{display:inline-block;color:#86cdb0;background:#12352c;border:1px solid #27634e;border-radius:99px;padding:4px 7px;font-size:10px;font-weight:800;margin-left:5px}.empty{color:#6c7789}.cards{display:none;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}.entity-card{padding:18px;border:1px solid var(--line);border-radius:13px;background:#0d131d}.entity-card .arrow{color:#94a3b8;font-size:18px;margin:10px 0}.hidden{display:none!important}@keyframes rise{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
-@media(max-width:960px){.metrics{grid-template-columns:repeat(2,1fr)}.grid{grid-template-columns:1fr}.hero{display:block}.hero .actions{margin-top:24px}}@media(max-width:640px){.shell{padding:20px 15px 50px}.nav{margin-bottom:48px}.status{font-size:11px}.drop-grid{grid-template-columns:1fr}.metrics{gap:9px}.metric{padding:15px}.metric-value{font-size:26px}.toolbar{display:block}.controls{margin-top:14px}.search{width:100%}.toggle{margin-top:8px;width:max-content}}
-</style></head><body><main class="shell">
-<nav class="nav"><div class="brand"><span class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.3"><path d="M12 3v18M3 12h18"/></svg></span>EntityForge<span style="color:#778294;font-weight:500">/ BER</span></div><div class="status"><i class="dot"></i> ML Model Pipeline Ready</div></nav>
-<section class="hero"><div><div class="eyebrow">Entity intelligence · v1.0</div><h1>Make every match<br><span style="color:#cbd5e1">feel certain.</span></h1><p>Precision-first entity resolution for fragmented business data. Upload your sources, run the model, and explore every relationship.</p></div><div class="actions"><a class="button ghost" href="/download/candidates">↓ Candidates</a><a class="button" href="/download/matching">↓ Export results</a></div></section>
-__NOTICE____SMART_PANEL__<section class="metrics"><div class="metric"><span class="metric-label">Total S1 entities</span><strong id="metric-total" class="metric-value">__TOTAL__</strong><span class="metric-foot">Reference records processed</span></div><div class="metric"><span class="metric-label">Matched pairs</span><strong id="metric-matched" class="metric-value">__MATCHED__</strong><span class="metric-foot"><strong>● Active</strong> precision pipeline</span></div><div class="metric"><span class="metric-label">Singletons</span><strong id="metric-singletons" class="metric-value">__SINGLETONS__</strong><span class="metric-foot">No confident relationship</span></div><div class="metric"><span class="metric-label">Mean confidence</span><strong id="metric-confidence" class="metric-value">__CONFIDENCE__%</strong><span class="metric-foot">Across all predicted links</span></div></section>
-<div class="grid"><section class="panel"><div class="panel-title"><h2>Confidence distribution</h2><span>Similarity score · live snapshot</span></div><div id="confidence-chart" class="chart"></div></section><section class="panel"><div class="panel-title"><h2>Match source split</h2><span>Linked entities</span></div><div id="source-chart" class="chart"></div></section></div>
-<section class="panel upload"><div class="panel-title"><div><h2>Run resolution pipeline</h2><span>Drop your three tab-separated source files to begin</span></div><span class="eyebrow">INPUT HUB</span></div><form id="upload-form" action="/upload-and-run/" method="post" enctype="multipart/form-data"><div class="drop-grid"><label class="drop" id="drop-source1"><input name="source1" type="file" accept=".tsv" required><div class="drop-top"><span class="source-tag">Source 01 · reference</span><span class="check">✓</span></div><div class="drop-name">Choose test_source1.tsv</div><div class="drop-hint">TSV · business entities</div><span class="drop-size">No file selected</span></label><label class="drop" id="drop-source2"><input name="source2" type="file" accept=".tsv" required><div class="drop-top"><span class="source-tag">Source 02</span><span class="check">✓</span></div><div class="drop-name">Choose test_source2.tsv</div><div class="drop-hint">TSV · fragmented records</div><span class="drop-size">No file selected</span></label><label class="drop" id="drop-source3"><input name="source3" type="file" accept=".tsv" required><div class="drop-top"><span class="source-tag">Source 03</span><span class="check">✓</span></div><div class="drop-name">Choose test_source3.tsv</div><div class="drop-hint">TSV · fragmented records</div><span class="drop-size">No file selected</span></label></div><div class="run-row"><small id="run-status">Ready when you are.</small><div class="progress" id="progress"><i></i></div><button type="submit">Run resolution pipeline <span>↗</span></button></div></form></section>
-<section class="panel"><div class="toolbar"><h2>Entity matches <span id="record-count" class="muted">· __TOTAL__ records</span></h2><div class="controls"><input id="search" class="search" type="search" placeholder="⌕  Search name, ID, country..."><div class="toggle"><button class="active" data-view="table">Table</button><button data-view="cards">Cards</button></div></div></div><div id="table-view" class="table-wrap"><table><thead><tr><th>Reference entity</th><th>Company profile</th><th>Resolved links</th><th>Model signal</th></tr></thead><tbody id="results"></tbody></table></div><div id="cards-view" class="cards"></div></section>
-</main><script>const rows=__ROWS_JSON__;const esc=s=>String(s??'').replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c]));const confidence=rows.flatMap(r=>r.matched.map(x=>x.confidence));
-function matchMarkup(r){return r.matched.length?r.matched.map(x=>`<div class="match"><span class="pill">${esc(x.source)} · ${esc(x.entity_id)}</span><span class="confidence">${esc(x.confidence)}%</span><br><span class="muted">${esc(x.business_name)}<br>${esc(x.business_address)}</span></div>`).join(''):'<span class="empty">No confident match</span>'}function draw(){const q=document.getElementById('search').value.toLowerCase();const visible=rows.filter(r=>JSON.stringify(r).toLowerCase().includes(q));document.getElementById('results').innerHTML=visible.map(r=>`<tr><td class="id">${esc(r.source1.entity_id)}</td><td><div class="company">${esc(r.source1.business_name)}</div><span class="muted">${esc(r.source1.business_address)}<br>${esc(r.source1.country)}</span></td><td>${matchMarkup(r)}</td><td><span class="confidence">${r.matched.length?Math.round(r.matched.reduce((a,x)=>a+x.confidence,0)/r.matched.length):0}% precision</span><br><span class="muted">${r.candidates.length} candidates ranked</span></td></tr>`).join('')||'<tr><td colspan="4" class="empty">No records found.</td></tr>';document.getElementById('cards-view').innerHTML=visible.map(r=>`<article class="entity-card"><span class="id">${esc(r.source1.entity_id)}</span><div class="company" style="margin-top:10px">${esc(r.source1.business_name)}</div><span class="muted">${esc(r.source1.business_address)}<br>${esc(r.source1.country)} · ${r.candidates.length} candidates</span><div class="arrow">↓</div>${matchMarkup(r)}<span class="muted">Model signal: ${r.matched.length?Math.round(r.matched.reduce((a,x)=>a+x.confidence,0)/r.matched.length):0}% precision</span></article>`).join('')||'<div class="empty">No records found.</div>'}document.getElementById('search').addEventListener('input',draw);document.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('[data-view]').forEach(x=>x.classList.remove('active'));b.classList.add('active');document.getElementById('table-view').classList.toggle('hidden',b.dataset.view!=='table');document.getElementById('cards-view').style.display=b.dataset.view==='cards'?'grid':'none'}));draw();
-new ApexCharts(document.querySelector('#confidence-chart'),{series:[{name:'Matches',data:[confidence.filter(x=>x<60).length,confidence.filter(x=>x>=60&&x<75).length,confidence.filter(x=>x>=75&&x<90).length,confidence.filter(x=>x>=90).length]}],chart:{type:'bar',height:220,toolbar:{show:false},background:'transparent'},plotOptions:{bar:{borderRadius:5,columnWidth:'45%'}},colors:['#4f46e5'],dataLabels:{enabled:false},grid:{borderColor:'#334155',strokeDashArray:4},xaxis:{categories:['<60','60–75','75–90','90–100'],labels:{style:{colors:'#94a3b8'}},axisBorder:{show:false},axisTicks:{show:false}},yaxis:{labels:{style:{colors:'#94a3b8'}}},tooltip:{theme:'dark'}}).render();new ApexCharts(document.querySelector('#source-chart'),{series:[__S2__,__S3__],labels:['Source 2','Source 3'],chart:{type:'donut',height:220,background:'transparent'},colors:['#4f46e5','#059669'],stroke:{colors:['#10151f']},legend:{position:'bottom',labels:{colors:'#94a3b8'}},dataLabels:{enabled:false},plotOptions:{pie:{donut:{size:'72%',labels:{show:true,total:{show:true,label:'LINKS',color:'#94a3b8',fontSize:'11px'},value:{color:'#e2e8f0',fontSize:'24px',fontWeight:700}}}}},tooltip:{theme:'dark'}}).render();
-function sizeLabel(bytes){if(bytes<1024)return bytes+' B';if(bytes<1048576)return (bytes/1024).toFixed(1)+' KB';return (bytes/1048576).toFixed(1)+' MB'}document.querySelectorAll('.drop input').forEach(input=>input.addEventListener('change',()=>{const drop=input.closest('.drop');drop.classList.toggle('ready',!!input.files.length);if(input.files.length){drop.querySelector('.drop-name').textContent=input.files[0].name;drop.querySelector('.drop-size').textContent=sizeLabel(input.files[0].size)+' · TSV'}}));document.getElementById('upload-form').addEventListener('submit',()=>{document.getElementById('run-status').textContent='Processing entity matches…';document.getElementById('progress').style.display='block'});</script></body></html>"""
-    fetch_script = """<script>
-document.getElementById('upload-form').addEventListener('submit', async event => {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const status = document.getElementById('run-status');
-    const progress = document.getElementById('progress');
-    const button = form.querySelector('button[type="submit"]');
-    status.textContent = 'Processing entity matches…';
-    status.style.color = '';
-    progress.style.display = 'block';
-    button.disabled = true;
-    try {
-        const response = await fetch('/upload-and-run/', { method: 'POST', body: new FormData(form) });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.detail || 'Upload failed');
-        rows.splice(0, rows.length, ...data.rows);
-        document.getElementById('metric-total').textContent = data.summary.total;
-        document.getElementById('metric-matched').textContent = data.summary.matched;
-        document.getElementById('metric-singletons').textContent = data.summary.singletons;
-        document.getElementById('metric-confidence').textContent = data.summary.mean_confidence + '%';
-        document.getElementById('record-count').textContent = '· ' + data.summary.total + ' records';
-        document.getElementById('search').value = '';
-        draw();
-        status.textContent = 'Pipeline complete — dashboard updated.';
-    } catch (error) {
-        status.textContent = error.message;
-        status.style.color = '#fca5a5';
-    } finally {
-        progress.style.display = 'none';
-        button.disabled = false;
-    }
-});
-const smartFiles = document.getElementById('smart-files');
-smartFiles.addEventListener('change', () => { document.getElementById('smart-file-count').textContent = smartFiles.files.length ? smartFiles.files.length + ' files ready' : 'No files selected'; });
-document.getElementById('analyze-files').addEventListener('click', async () => {
-    const output = document.getElementById('analysis-output');
-    if (smartFiles.files.length < 2) { output.innerHTML = '<span class="muted">Choose at least two CSV/TSV files first.</span>'; return; }
-    const form = new FormData();
-    Array.from(smartFiles.files).forEach(file => form.append('files', file));
-    output.innerHTML = '<span class="muted">Analyzing headers, row counts, and model strategy…</span>';
-    try {
-        const response = await fetch('/analyze/', { method: 'POST', body: form });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.detail || 'Analysis failed');
-        output.innerHTML = '<div class="analysis-grid">' + data.files.map(file => '<div class="analysis-card"><strong>' + esc(file.filename) + '</strong><small>' + esc(file.role) + ' · ' + file.schema.rows + ' rows</small><small>ID: ' + esc(file.schema.mapping.entity_id || 'not detected') + '</small><small>Name: ' + esc(file.schema.mapping.business_name || 'not detected') + '</small><small>Address: ' + esc(file.schema.mapping.business_address || 'not detected') + '</small><small>Country: ' + esc(file.schema.mapping.country || 'not detected') + '</small></div>').join('') + '</div><div class="plan-bar">' + data.plan.stages.map(stage => '<span class="plan-tag">✓ ' + esc(stage) + '</span>').join('') + '<span class="plan-tag">' + esc(data.plan.model) + '</span></div>';
-    } catch (error) { output.innerHTML = '<span style="color:#fca5a5">' + esc(error.message) + '</span>'; }
-});
-document.getElementById('smart-run').addEventListener('click', async () => {
-    const output = document.getElementById('analysis-output');
-    if (smartFiles.files.length < 2) { output.innerHTML = '<span class="muted">Choose at least two CSV/TSV files first.</span>'; return; }
-    const form = new FormData();
-    Array.from(smartFiles.files).forEach(file => form.append('files', file));
-    output.innerHTML = '<span class="muted">Normalizing schemas and running smart matching…</span>';
-    try {
-        const response = await fetch('/smart-run/', { method: 'POST', body: form });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.detail || 'Smart matching failed');
-        rows.splice(0, rows.length, ...data.rows);
-        document.getElementById('metric-total').textContent = data.summary.total;
-        document.getElementById('metric-matched').textContent = data.summary.matched;
-        document.getElementById('metric-singletons').textContent = data.summary.singletons;
-        document.getElementById('metric-confidence').textContent = data.summary.mean_confidence + '%';
-        document.getElementById('record-count').textContent = '· ' + data.summary.total + ' records';
-        document.getElementById('search').value = '';
-        draw();
-        output.innerHTML = '<span class="muted">✓ Smart pipeline complete — results updated.</span>';
-    } catch (error) { output.innerHTML = '<span style="color:#fca5a5">' + esc(error.message) + '</span>'; }
-});
-</script>"""
-    return (template.replace("__NOTICE__", notice).replace("__SMART_PANEL__", smart_panel).replace("__TOTAL__", str(summary["total"])).replace("__MATCHED__", str(summary["matched"]))
-            .replace("__SINGLETONS__", str(summary["singletons"])).replace("__CONFIDENCE__", str(summary["mean_confidence"]))
-            .replace("__S2__", str(summary["source2_matches"])).replace("__S3__", str(summary["source3_matches"])).replace("__ROWS_JSON__", rows_json) + fetch_script)
+    payload = (json.dumps({"rows": rows, "summary": summary, "notice": message}, ensure_ascii=False)
+               .replace("<", "\\u003c")
+               .replace(">", "\\u003e")
+               .replace("&", "\\u0026"))
+    return DASHBOARD_TEMPLATE.read_text(encoding="utf-8").replace("__DATA__", payload)
 
 
 @app.get("/", response_class=HTMLResponse)

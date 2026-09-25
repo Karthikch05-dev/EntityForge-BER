@@ -14,14 +14,15 @@ EntityForge-BER matches fragmented company records from Source 2 and Source 3 ag
 - Smart analysis of 2+ CSV/TSV files with automatic schema mapping
 - Automatic reference/target role inference and model-plan selection
 - Atomic upload replacement and rollback when a pipeline run fails
-- Dark-slate responsive dashboard with charts and table/card views
+- Guided, responsive dashboard (light and dark) with expandable match comparisons
 - Downloadable `matching_results.tsv` and `candidate_pairs.tsv`
 
 ## Project layout
 
 ```text
 EntityForge-BER/
-├── entity_resolver_app.py       # FastAPI application and embedded dashboard
+├── entity_resolver_app.py       # FastAPI application
+├── templates/dashboard.html     # Dashboard page (HTML, CSS, JS)
 ├── vercel.json                  # Vercel Python function and route configuration
 ├── requirements.txt             # Minimal Vercel dependency set
 ├── run_solution.py              # ML matching pipeline
@@ -77,17 +78,12 @@ Or import `Karthikch05-dev/EntityForge-BER` in the Vercel dashboard. The include
 
 ### Upload workflow
 
-1. Select one TSV for each Source 1, Source 2, and Source 3 zone.
-2. Each file must contain `entity_id`, `business_name`, `business_address`, and `country`.
-3. The dashboard validates file type, size, schema, and duplicate IDs.
-4. The three files are saved to `dataset/test/` and the pipeline runs automatically.
-5. The dashboard reloads with fresh metrics and comparisons.
+1. Drop two or more CSV/TSV files onto the dashboard (or click to browse).
+2. The columns for ID, company name, address and country are detected automatically; anything missing is flagged.
+3. Choose which file is the reference — every other file is matched against it.
+4. Select **Match records**. Results appear below with coverage, a similarity breakdown, filters, search and an expandable side-by-side comparison for each record.
 
-Uploads are limited to 25 MB per file. Failed runs restore the previous inputs and outputs.
-
-### Smart Auto-ML analysis
-
-The dashboard also includes a four-step workspace for exploratory uploads. Choose two or more CSV/TSV files in the Smart data workspace and select **Analyze dataset**. The `/analyze/` endpoint returns detected ID, company-name, address, and country columns, inferred reference/target roles, row counts, and the planned matching stages. **Run smart match** normalizes the detected schemas, combines all target files, runs the production matcher, and updates results in place through `/smart-run/`.
+Uploads are limited to 25 MB per file. Failed runs restore the previous inputs and outputs. The `/analyze/`, `/smart-run/` and legacy three-file `/process` and `/upload-and-run/` endpoints remain available (see `/docs`).
 
 ## Git setup
 
