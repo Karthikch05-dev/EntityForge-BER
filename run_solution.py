@@ -12,7 +12,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 try:
     from lightgbm import LGBMClassifier
-except ImportError:  # pragma: no cover - useful on minimal installations
+except (ImportError, OSError):  # pragma: no cover - missing package, or missing libgomp on serverless Linux
     LGBMClassifier = None
 from sklearn.ensemble import HistGradientBoostingClassifier
 

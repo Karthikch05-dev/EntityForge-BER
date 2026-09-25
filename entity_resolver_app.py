@@ -251,13 +251,23 @@ async def smart_run(files: Annotated[list[UploadFile], File(...)]) -> JSONRespon
 
     normalized = []
     target_frames = []
+    seen_ids: set[str] = set()
     for index, upload in enumerate(files):
         filename = upload.filename or f"upload-{index}.tsv"
         data = await upload.read()
+        if len(data) > MAX_UPLOAD_BYTES:
+            raise HTTPException(status_code=413, detail=f"{filename}: maximum upload size is 25 MB")
         frame = parse_delimited(data, filename)
         schema = detect_schema(frame)
         label = "reference" if index == 0 else f"target{index}"
         canonical = normalize_for_pipeline(frame, schema, label)
+        if canonical["entity_id"].duplicated().any():
+            raise HTTPException(status_code=400, detail=f"{filename}: ID values must be unique within the file")
+        # Files exported separately often reuse the same IDs (1, 2, 3…); namespace a
+        # comparison file by its name when its IDs clash with an earlier file.
+        if index and seen_ids.intersection(canonical["entity_id"]):
+            canonical["entity_id"] = Path(filename).stem + ":" + canonical["entity_id"]
+        seen_ids.update(canonical["entity_id"])
         if index == 0:
             normalized.append(canonical)
         else:

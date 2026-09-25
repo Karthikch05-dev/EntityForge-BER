@@ -3,7 +3,11 @@
   "builds": [
     {
       "src": "entity_resolver_app.py",
-      "use": "@vercel/python"
+      "use": "@vercel/python",
+      "config": {
+        "maxLambdaSize": "250mb",
+        "includeFiles": ["run_solution.py", "templates/**", "dataset/train/**"]
+      }
     }
   ],
   "routes": [
