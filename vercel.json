@@ -6,7 +6,7 @@
       "use": "@vercel/python",
       "config": {
         "maxLambdaSize": "250mb",
-        "includeFiles": ["run_solution.py", "templates/**", "dataset/train/**"]
+        "includeFiles": ["run_solution.py", "dataset/train/**", "dataset/test/**"]
       }
     }
   ],

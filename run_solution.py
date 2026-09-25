@@ -1,21 +1,45 @@
-"""Train and run a precision-oriented entity-resolution pipeline."""
+"""Precision-oriented business entity-resolution pipeline.
+
+Importable (``resolve``) for the web app and runnable as a CLI for the offline
+submission:  python run_solution.py [--train-dir ...] [--test-dir ...] [--output-dir ...]
+"""
+from __future__ import annotations
+
 import argparse
 import os
 import re
 import time
+import warnings
 from difflib import SequenceMatcher
+from functools import lru_cache
 
 import numpy as np
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
+
+try:
+    from rapidfuzz.distance import Indel
+
+    def ratio(left: str, right: str) -> float:
+        return Indel.normalized_similarity(left, right)
+except ImportError:  # pragma: no cover - rapidfuzz is optional
+    def ratio(left: str, right: str) -> float:
+        return SequenceMatcher(None, left, right).ratio()
 
 try:
     from lightgbm import LGBMClassifier
+    MODEL_NAME = "LightGBM"
 except (ImportError, OSError):  # pragma: no cover - missing package, or missing libgomp on serverless Linux
     LGBMClassifier = None
+    MODEL_NAME = "Gradient boosting"
 from sklearn.ensemble import HistGradientBoostingClassifier
 
+warnings.filterwarnings("ignore", message="X does not have valid feature names")
+
+
+REQUIRED_COLUMNS = ("entity_id", "business_name", "business_address", "country")
+TOP_K = 15
+BLOCK_CHUNK = 1024
 
 LEGAL = re.compile(r"\b(private|pvt|limited|ltd|incorporated|inc|corporation|corp|llc|llp|sa|se)\b")
 ABBREVIATIONS = {"blr": "bengaluru", "b'lore": "bengaluru", "rd": "road", "st": "street",
@@ -30,13 +54,14 @@ def clean(value):
     return " ".join(words)
 
 
-def prepare(frame):
+def prepare(frame: pd.DataFrame) -> pd.DataFrame:
     frame = frame.copy()
+    frame["entity_id"] = frame["entity_id"].astype(str)
     for col in ("business_name", "business_address", "country"):
         frame[col] = frame[col].fillna("").map(clean)
     frame["name_clean"] = frame["business_name"].map(lambda x: LEGAL.sub(" ", x)).str.replace(r"\s+", " ", regex=True).str.strip()
     frame["text"] = frame["name_clean"] + " " + frame["business_address"] + " " + frame["country"]
-    return frame
+    return frame.reset_index(drop=True)
 
 
 def token_jaccard(left, right):
@@ -44,13 +69,13 @@ def token_jaccard(left, right):
     return len(a & b) / len(a | b) if a | b else 1.0
 
 
-def pair_features(left, right, vectorizer):
+def pair_features(left, right, cosine: float) -> list[float]:
     values = []
     for column in ("name_clean", "business_address", "text"):
         a, b = left[column], right[column]
-        values.extend((SequenceMatcher(None, a, b).ratio(), token_jaccard(a, b)))
+        values.extend((ratio(a, b), token_jaccard(a, b)))
     values.append(float(left["country"] == right["country"]))
-    values.append(float(cosine_similarity(vectorizer.transform([left["text"]]), vectorizer.transform([right["text"]]))[0, 0]))
+    values.append(float(cosine))
     return values
 
 
@@ -73,49 +98,95 @@ def best_threshold(y_true, scores):
     return best
 
 
-def load(path):
-    return prepare(pd.read_csv(path, sep="\t", dtype=str))
+def read_table(path) -> pd.DataFrame:
+    return pd.read_csv(path, sep="\t", dtype=str).fillna("")
 
 
-def main(train_dir="dataset/train", test_dir="dataset/test", output_dir="output"):
+@lru_cache(maxsize=4)
+def load_training(train_dir: str):
+    source1 = prepare(read_table(os.path.join(train_dir, "train_source1.tsv")))
+    targets = prepare(pd.concat([read_table(os.path.join(train_dir, name))
+                                 for name in ("train_source2.tsv", "train_source3.tsv")], ignore_index=True))
+    truth = read_table(os.path.join(train_dir, "train_ground_truth.tsv")).set_index("source1_entity_id")["matched_entity_ids"]
+    return source1, targets, truth.to_dict()
+
+
+def block(reference_matrix, target_matrix, k: int):
+    """TF-IDF blocking: top-k target indices and cosine scores for each reference row."""
+    k = min(k, target_matrix.shape[0])
+    indices, cosines = [], []
+    for start in range(0, reference_matrix.shape[0], BLOCK_CHUNK):
+        sims = (reference_matrix[start:start + BLOCK_CHUNK] @ target_matrix.T).toarray()
+        top = np.argpartition(-sims, k - 1, axis=1)[:, :k] if k < sims.shape[1] else np.tile(np.arange(sims.shape[1]), (sims.shape[0], 1))
+        indices.append(top)
+        cosines.append(np.take_along_axis(sims, top, axis=1))
+    return np.vstack(indices), np.vstack(cosines)
+
+
+def resolve(reference: pd.DataFrame, targets: pd.DataFrame, train_dir: str = "dataset/train", top_k: int = TOP_K) -> dict:
+    """Match every reference record against the pooled target records.
+
+    Returns the two submission tables plus per-pair scores for display.
+    """
     started = time.time()
-    train_s1 = load(os.path.join(train_dir, "train_source1.tsv"))
-    train_targets = pd.concat([load(os.path.join(train_dir, name)) for name in ("train_source2.tsv", "train_source3.tsv")], ignore_index=True)
-    test_s1 = load(os.path.join(test_dir, "test_source1.tsv"))
-    test_targets = pd.concat([load(os.path.join(test_dir, name)) for name in ("test_source2.tsv", "test_source3.tsv")], ignore_index=True)
+    if reference.empty or targets.empty:
+        raise ValueError("Both the reference file and the comparison files need at least one record.")
+    ref, tgt = prepare(reference), prepare(targets)
+    train_s1, train_targets, truth = load_training(os.path.abspath(train_dir))
 
     vectorizer = TfidfVectorizer(analyzer="char_wb", ngram_range=(3, 5), min_df=1)
-    vectorizer.fit(pd.concat([train_s1["text"], train_targets["text"], test_s1["text"], test_targets["text"]]))
+    vectorizer.fit(pd.concat([train_s1["text"], train_targets["text"], ref["text"], tgt["text"]]))
 
-    truth = pd.read_csv(os.path.join(train_dir, "train_ground_truth.tsv"), sep="\t", dtype=str).set_index("source1_entity_id")
+    # Train on every pair of the (small) labelled training set.
+    train_cos = (vectorizer.transform(train_s1["text"]) @ vectorizer.transform(train_targets["text"]).T).toarray()
     x_train, y_train = [], []
-    for _, left in train_s1.iterrows():
-        positives = set(str(truth.loc[left.entity_id, "matched_entity_ids"]).split(","))
-        for _, right in train_targets.iterrows():
-            x_train.append(pair_features(left, right, vectorizer))
+    for i, left in train_s1.iterrows():
+        positives = set(str(truth.get(left.entity_id, "")).split(","))
+        for j, right in train_targets.iterrows():
+            x_train.append(pair_features(left, right, train_cos[i, j]))
             y_train.append(int(right.entity_id in positives))
     x_train, y_train = np.asarray(x_train), np.asarray(y_train)
-
     model = (LGBMClassifier(n_estimators=100, max_depth=4, learning_rate=0.05, verbosity=-1, random_state=42)
              if LGBMClassifier else HistGradientBoostingClassifier(max_iter=100, max_depth=4, random_state=42))
     model.fit(x_train, y_train)
-    train_scores = model.predict_proba(x_train)[:, 1]
-    threshold, train_score = best_threshold(y_train, train_scores)
-    print(f"Training F_0.5={train_score:.4f}; selected threshold={threshold:.3f}")
+    threshold, train_score = best_threshold(y_train, model.predict_proba(x_train)[:, 1])
 
-    candidate_rows, matching_rows = [], []
-    for _, left in test_s1.iterrows():
-        rows = [(right, model.predict_proba([pair_features(left, right, vectorizer)])[0, 1]) for _, right in test_targets.iterrows()]
-        rows.sort(key=lambda item: item[1], reverse=True)
-        candidates = rows[:15]
-        matches = [right.entity_id for right, score in candidates if score >= threshold]
-        candidate_rows.append({"source1_entity_id": left.entity_id, "candidate_entity_ids": ",".join(right.entity_id for right, _ in candidates)})
-        matching_rows.append({"source1_entity_id": left.entity_id, "matched_entity_ids": ",".join(matches)})
+    # Candidate blocking, then score only the shortlisted pairs.
+    top, cosines = block(vectorizer.transform(ref["text"]), vectorizer.transform(tgt["text"]), top_k)
+    ref_records, tgt_records = ref.to_dict("records"), tgt.to_dict("records")
+    features = [pair_features(ref_records[i], tgt_records[j], cosines[i, n])
+                for i in range(len(ref_records)) for n, j in enumerate(top[i])]
+    probabilities = model.predict_proba(np.asarray(features))[:, 1].reshape(top.shape)
 
+    candidate_rows, matching_rows, scored = [], [], {}
+    for i, left in enumerate(ref_records):
+        ranked = sorted(zip(top[i], probabilities[i]), key=lambda item: (-item[1], item[0]))
+        pairs = [(tgt_records[j]["entity_id"], float(p)) for j, p in ranked]
+        scored[left["entity_id"]] = pairs
+        candidate_rows.append({"source1_entity_id": left["entity_id"], "candidate_entity_ids": ",".join(e for e, _ in pairs)})
+        matching_rows.append({"source1_entity_id": left["entity_id"],
+                              "matched_entity_ids": ",".join(e for e, p in pairs if p >= threshold)})
+
+    return {
+        "candidates": pd.DataFrame(candidate_rows, columns=["source1_entity_id", "candidate_entity_ids"]),
+        "matches": pd.DataFrame(matching_rows, columns=["source1_entity_id", "matched_entity_ids"]),
+        "scores": scored,
+        "threshold": float(threshold),
+        "train_f05": float(train_score),
+        "model": MODEL_NAME,
+        "seconds": time.time() - started,
+    }
+
+
+def main(train_dir="dataset/train", test_dir="dataset/test", output_dir="output"):
+    reference = read_table(os.path.join(test_dir, "test_source1.tsv"))
+    targets = pd.concat([read_table(os.path.join(test_dir, name)) for name in ("test_source2.tsv", "test_source3.tsv")], ignore_index=True)
+    result = resolve(reference, targets, train_dir)
+    print(f"Training F_0.5={result['train_f05']:.4f}; selected threshold={result['threshold']:.3f}")
     os.makedirs(output_dir, exist_ok=True)
-    pd.DataFrame(candidate_rows).to_csv(os.path.join(output_dir, "candidate_pairs.tsv"), sep="\t", index=False)
-    pd.DataFrame(matching_rows).to_csv(os.path.join(output_dir, "matching_results.tsv"), sep="\t", index=False)
-    print(f"Wrote {len(test_s1)} rows in {time.time() - started:.2f}s")
+    result["candidates"].to_csv(os.path.join(output_dir, "candidate_pairs.tsv"), sep="\t", index=False)
+    result["matches"].to_csv(os.path.join(output_dir, "matching_results.tsv"), sep="\t", index=False)
+    print(f"Wrote {len(reference)} rows in {result['seconds']:.2f}s")
 
 
 if __name__ == "__main__":
