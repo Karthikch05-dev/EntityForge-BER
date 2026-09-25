@@ -30,6 +30,9 @@ app = FastAPI(
     title="EntityForge BER Dashboard",
     description="Upload fragmented company data, run matching, and inspect the results.",
     version="1.0.0",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
 )
 
 
